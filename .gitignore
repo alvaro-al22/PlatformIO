@@ -1,0 +1,7 @@
+.venv/
+.pio/
+build/
+sdkconfig
+sdkconfig.old
+sdkconfig.*
+!sdkconfig.defaults

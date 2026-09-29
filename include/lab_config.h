@@ -1,0 +1,40 @@
+#pragma once
+
+#include "sdkconfig.h"
+
+#define LAB_NAME "USB Lab"
+#define LAB_VERSION "0.1.0"
+#define LAB_PROMPT "lab> "
+#define LAB_LINE_LENGTH 128
+#define LAB_HISTORY_LENGTH 16
+#define LAB_CONSOLE_STACK_SIZE 6144
+#define LAB_BAUD_RATE CONFIG_ESP_CONSOLE_UART_BAUDRATE
+#define LAB_LOG_LEVEL ESP_LOG_INFO
+#define LAB_EXPECTED_FLASH_BYTES (16U * 1024U * 1024U)
+#define LAB_EXPECTED_PSRAM_BYTES (8U * 1024U * 1024U)
+#define LAB_MIN_INTERNAL_HEAP_BYTES (32U * 1024U)
+
+#define LAB_PIN_RESERVATIONS(PIN) \
+    PIN(SPI_SCK, 12) \
+    PIN(SPI_MOSI, 11) \
+    PIN(SPI_MISO, 13) \
+    PIN(CC1101_CS, 10) \
+    PIN(CC1101_GDO0, 14) \
+    PIN(CC1101_GDO2, 21) \
+    PIN(I2C_SDA, 8) \
+    PIN(I2C_SCL, 9) \
+    PIN(PN532_IRQ, 4) \
+    PIN(PN532_RESET, 5) \
+    PIN(IR_TX, 17) \
+    PIN(IR_RX, 18) \
+    PIN(EXPANSION_1, 1) \
+    PIN(EXPANSION_2, 2) \
+    PIN(EXPANSION_3, 6) \
+    PIN(EXPANSION_4, 7) \
+    PIN(EXPANSION_5, 15) \
+    PIN(EXPANSION_6, 16) \
+    PIN(EXPANSION_7, 47)
+
+#define LAB_DECLARE_PIN(name, number) LAB_PIN_##name = number,
+enum { LAB_PIN_RESERVATIONS(LAB_DECLARE_PIN) };
+#undef LAB_DECLARE_PIN
