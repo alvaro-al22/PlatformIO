@@ -1,14 +1,46 @@
 #include "core/module.h"
 #include <stdio.h>
 #include "esp_log.h"
+#include "nvs_flash.h"
 
 static const lab_module_t *const modules[] = {
     &lab_system_module,
+    &lab_wifi_module,
+    &lab_ble_module,
     &lab_nfc_module,
     &lab_cc1101_module,
     &lab_ir_module,
     &lab_gpio_module,
 };
+
+esp_err_t lab_nvs_init(void)
+{
+    static bool ready;
+    if (ready) {
+        return ESP_OK;
+    }
+    esp_err_t error = nvs_flash_init();
+    if (error == ESP_ERR_NVS_NO_FREE_PAGES || error == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+        ESP_LOGW("nvs", "NVS partition incompatible, erasing it");
+        error = nvs_flash_erase();
+        if (error == ESP_OK) {
+            error = nvs_flash_init();
+        }
+    }
+    ready = error == ESP_OK;
+    return error;
+}
+
+// Radio names come from nearby devices; strip control characters before printing.
+void lab_sanitize(char *text)
+{
+    for (; *text != '\0'; ++text) {
+        unsigned char character = (unsigned char)*text;
+        if (character < 0x20 || character >= 0x7f) {
+            *text = '?';
+        }
+    }
+}
 
 const lab_module_t *const *lab_modules(size_t *count)
 {

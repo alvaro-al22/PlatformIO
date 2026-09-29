@@ -50,12 +50,14 @@ Se utiliza **ESP-IDF**, el framework oficial de Espressif, porque ya proporciona
 | Consola y menu de texto | Implementados. |
 | Informacion del sistema | Version, chip, tiempo encendido, motivo de reinicio y memoria disponible. |
 | Diagnostico basico | Comprueba chip, tamanos de memoria, integridad del heap y reservas de pines. |
+| Wi-Fi | Modo estacion: buscar redes, conectar, ver estado y desconectar. Se enciende con el primer comando `wifi`. |
+| Bluetooth LE | Busqueda pasiva de dispositivos cercanos (NimBLE). Se enciende con el primer comando `ble`. |
 | NFC / PN532 | Marcador pendiente: responde `not implemented`. |
 | CC1101 | Marcador pendiente: no transmite ni recibe radio. |
 | IR | Marcador pendiente: no emite ni recibe infrarrojos. |
 | GPIO | Marcador pendiente: no permite leer ni modificar pines. |
 
-Wi-Fi y Bluetooth no se inicializan. No hay pantalla, interfaz grafica, bateria, PCB propia ni carcasa.
+Wi-Fi y Bluetooth no se inicializan al arrancar: solo se encienden al usar `wifi` o `ble`. Las credenciales Wi-Fi se guardan solo en RAM y se pierden al reiniciar. No hay pantalla, interfaz grafica, bateria, PCB propia ni carcasa.
 
 La CLI **se ejecuta en el ESP32**. El ordenador solo actua como terminal. El menu es una lista de comandos: no se navega con botones ni seleccionando numeros.
 
@@ -225,15 +227,80 @@ Los comandos se escriben en minusculas y se ejecutan con Enter.
 
 | Comando | Que hace |
 |---|---|
-| `help` | Muestra la ayuda de los comandos registrados en la consola. |
-| `menu` | Lista los cinco modulos y su estado de implementacion. |
-| `system info` | Muestra version de firmware y ESP-IDF, chip, tiempo encendido, motivo de reinicio y heap libre. |
-| `system diag` | Repite el diagnostico del sistema y muestra los modulos que no se han comprobado. |
-| `system pins` | Muestra las reservas de GPIO. No lee, activa ni modifica esos pines. |
-| `nfc` | Devuelve `not implemented`. No detecta ni lee tarjetas. |
-| `cc1101` | Devuelve `not implemented`. No realiza operaciones de radio. |
-| `ir` | Devuelve `not implemented`. No controla los modulos IR. |
-| `gpio` | Devuelve `not implemented`. No cambia niveles electricos. |
+### Sistema y consola
+
+| Comando | Que hace |
+|---|---|
+| `help` | Muestra la ayuda de los comandos registrados. |
+| `menu` | Lista los modulos y su estado de implementacion. |
+| `system info` | Muestra version, chip, tiempo encendido, motivo de reinicio y memoria. |
+| `system diag` | Repite el diagnostico del sistema. |
+| `system pins` | Muestra las reservas de GPIO; no activa ni modifica esos pines. |
+
+### Wi-Fi
+
+| Comando | Que hace |
+|---|---|
+| `wifi scan` | Escanea redes de 2,4 GHz y muestra BSSID, SSID, senal, canal, autenticacion y cifrados. Conserva como maximo 20 resultados. No captura PMF. |
+| `wifi audit` | Avisa de redes abiertas, WEP, WPA antiguo o cifrados WEP/TKIP. No captura PMF, prueba contrasenas ni confirma la identidad del router. |
+| `wifi pmf <BSSID>` | Consulta experimental del PMF anunciado por una red del ultimo escaneo, de menos de 120 segundos. Requiere estar desconectado y escucha hasta 5 segundos en su canal. Pendiente de validar en placa. |
+| `wifi trust <BSSID>` | Guarda un punto de acceso del ultimo escaneo como referencia conocida. Usa el formato `aa:bb:cc:dd:ee:ff`. |
+| `wifi trust list` | Muestra las referencias conocidas guardadas en RAM. |
+| `wifi trust clear` | Borra todas las referencias conocidas. |
+| `wifi suspects` | Escanea y marca BSSID desconocidos con SSID conocido, o cambios de SSID/seguridad en un BSSID registrado. Es una alerta para revisar, no una confirmacion de ataque. |
+| `wifi connect <ssid> [password]` | Conecta a una red. Si el nombre tiene espacios usa comillas: `wifi connect "Mi Red" clave123`. |
+| `wifi status` | Muestra si esta conectado, la red, la senal y la IP. |
+| `wifi disconnect` | Se desconecta de la red. |
+
+La lista `trust` admite hasta 16 puntos de acceso y se pierde al reiniciar. Registra todos los nodos legitimos de una red mesh o repetidores para evitar alertas esperadas. El inventario solo cubre los resultados retenidos del escaneo y no determina por si solo si una red es segura.
+
+#### PMF anunciado
+
+**Estado actual: consulta individual experimental con `wifi pmf <BSSID>`.** Las pruebas anteriores en placa provocaron reinicios al activar el modo promiscuo, incluso con el callback en IRAM. Separar la captura del escaneo no garantiza resolver ese fallo. `wifi scan`, `wifi audit` y `wifi suspects` no activan ni detienen el modo promiscuo, ni muestran campos PMF o `SKIP PMF`.
+
+Tras compilar y flashear, puedes probarlo en la consola `lab>` con una red propia:
+
+```text
+wifi disconnect
+wifi scan
+wifi pmf aa:bb:cc:dd:ee:ff
+```
+
+Sustituye la direccion por el BSSID de un resultado retenido. La consulta exige un escaneo correcto de menos de 120 segundos y rechaza una estacion conectada; no desconecta automaticamente ni realiza otro escaneo. Escucha hasta 5 segundos en el canal guardado y termina antes si recibe un anuncio coincidente. Si el punto de acceso ha cambiado de canal, repite `wifi scan`.
+
+Al terminar, tambien ante errores de captura devueltos por el SDK, desactiva el modo promiscuo, retira el callback y restaura el filtro y el canal anteriores. Si la limpieza falla, bloquea nuevos comandos de radio hasta reiniciar. El limite de escucha no puede impedir un bloqueo o reinicio dentro del driver. No desactives el watchdog.
+
+PMF (Protected Management Frames, IEEE 802.11w) protege determinadas tramas de gestion, incluidas las de desconexion, frente a falsificaciones cuando se negocia en la conexion. No evita interferencias de radio ni impide conectarse a quien conoce la contrasena.
+
+El campo `pmf_advertised` del comando individual tiene los siguientes significados:
+
+| Valor | Significado |
+|---|---|
+| `unsupported` | El anuncio observado no declara soporte PMF: MFPC desactivado o sin elemento RSN. |
+| `optional` | El punto de acceso declara soporte PMF, pero no lo exige (MFPC=1, MFPR=0). |
+| `required` | El punto de acceso exige PMF (MFPC=1, MFPR=1). |
+| `unknown` | Sin anuncio capturado dentro del plazo, o primer anuncio incompleto/incoherente. No significa que PMF este desactivado en el router. |
+
+Leer estos anuncios no requiere conectarse a la red ni conocer su contrasena. El callback solo filtra y copia el primer beacon o respuesta de sondeo cuyo BSSID, direccion de origen y canal coincidan con el objetivo; descarta recepciones con errores y anuncios de mas de 1536 bytes. El analizador se ejecuta despues de detener la captura. No se agregan observaciones ni se detectan contradicciones entre varios anuncios.
+
+La consulta PMF es una escucha pasiva en 2,4 GHz. El escaneo habitual puede enviar solicitudes de sondeo. No se capturan credenciales ni contenido del trafico de los clientes. El analizador usa los bits MFPC/MFPR del elemento RSN, no una deduccion a partir de WPA2/WPA3. Los anuncios no prueban la identidad del emisor.
+
+**Es PMF anunciado, no el PMF negociado por cada cliente.** El contador de advertencias de `wifi audit` sigue contando solo redes abiertas/antiguas y cifrados obsoletos, no estados PMF. `wifi suspects` y `trust` no muestran, guardan ni comparan PMF; siguen comparando BSSID, SSID, autenticacion y cifrados. No buscan dispositivos conectados a tu router.
+
+### Bluetooth LE
+
+| Comando | Que hace |
+|---|---|
+| `ble scan [segundos]` | Escucha anuncios Bluetooth LE durante 1 a 30 segundos; usa 5 segundos por defecto. No se conecta a los dispositivos. |
+
+### Modulos pendientes
+
+| Comando | Estado |
+|---|---|
+| `nfc` | Devuelve `not implemented`; no detecta ni lee tarjetas. |
+| `cc1101` | Devuelve `not implemented`; no realiza operaciones de radio. |
+| `ir` | Devuelve `not implemented`; no controla los modulos IR. |
+| `gpio` | Devuelve `not implemented`; no cambia niveles electricos. |
 
 Prueba inicial recomendada, ejecutando una linea cada vez dentro de la consola:
 
@@ -243,6 +310,11 @@ menu
 system info
 system diag
 system pins
+wifi scan
+wifi audit
+wifi trust list
+wifi suspects
+ble scan 10
 nfc
 cc1101
 ir
@@ -326,6 +398,9 @@ Los archivos `.c` contienen implementaciones en C; los `.h` contienen declaracio
 | [src/core/module.h](src/core/module.h) | Define el contrato comun de un modulo: nombre, descripcion, comando, diagnostico y estado. |
 | [src/core/module.c](src/core/module.c) | Mantiene el registro de modulos, genera el menu y coordina los diagnosticos. |
 | [src/modules/system.c](src/modules/system.c) | Implementa `system info`, `system diag` y `system pins`. |
+| [src/modules/wifi.c](src/modules/wifi.c) | Implementa el modulo Wi-Fi en modo estacion. |
+| [src/modules/wifi_audit.c](src/modules/wifi_audit.c) | Analiza seguridad anunciada, referencias conocidas y PMF de beacons/respuestas de sondeo. |
+| [src/modules/ble.c](src/modules/ble.c) | Implementa la busqueda Bluetooth LE con NimBLE. |
 | [src/modules/nfc.c](src/modules/nfc.c) | Declara el modulo PN532 pendiente. |
 | [src/modules/cc1101.c](src/modules/cc1101.c) | Declara el modulo de radio pendiente. |
 | [src/modules/ir.c](src/modules/ir.c) | Declara el modulo de infrarrojos pendiente. |
@@ -363,6 +438,8 @@ Las opciones propias de ESP-IDF se encuentran en [sdkconfig.defaults](sdkconfig.
 Guarda los cambios, sal del menu, compila y flashea otra vez. Si quieres reproducir esas opciones en una instalacion limpia, manten tambien actualizados los valores iniciales correspondientes. No cambies el modo de flash o PSRAM sin verificar antes la variante real de la placa.
 
 La velocidad del firmware procede de la opcion UART de ESP-IDF. Si la cambias, ajusta tambien `monitor_speed` en la configuracion de PlatformIO. Para empezar, deja ambos a 115200.
+
+**Prueba de diagnostico actual:** la flash se ha reducido de 80 a 40 MHz para investigar los reinicios durante el escaneo Wi-Fi normal. Se conservan QIO, 16 MB de flash y PSRAM octal a 80 MHz. No es una reparacion confirmada. El cambio esta aplicado en `board_build.f_flash`, en `sdkconfig.defaults` y en la configuracion efectiva. Para volver a 80 MHz, restaura `80000000L`, selecciona `CONFIG_ESPTOOLPY_FLASHFREQ_80M` en lugar de `CONFIG_ESPTOOLPY_FLASHFREQ_40M` en ambas configuraciones y regenera la configuracion efectiva con `menuconfig`, compila y flashea. No cambies la frecuencia de PSRAM para esta comparacion.
 
 ### Propuesta para fases futuras
 
@@ -410,6 +487,9 @@ Antes de implementar cualquier periferico habra que comprobar su modelo exacto, 
 | `not implemented` o `SKIP` | Es el comportamiento esperado de los modulos pendientes. No necesitas conectarlos para eliminar esos mensajes. |
 | Tamano de PSRAM o flash incorrecto | Verifica que la placa sea realmente N16R8 y revisa la configuracion efectiva y los logs. No cambies solo el valor esperado para ocultar el problema. |
 | Reinicios, brownout o desconexiones | Deja solo la placa conectada, prueba otro cable/puerto USB y comprueba alimentacion y logs. |
+| `wifi scan` reinicia tras `ic_enable_sniffer` | El escaneo actual no activa el modo promiscuo; compila, flashea y comprueba la identidad de la imagen. La captura solo se solicita con `wifi pmf <BSSID>`. Conserva el log completo si vuelve a fallar. |
+| `wifi scan` reinicia con `LoadProhibited` sin `ic_enable_sniffer` | El registro `cbc2303f4` falla dentro del analizador RSN del SDK. Se ha preparado una prueba con flash a 40 MHz; no esta confirmada la causa. Prueba primero solo el escaneo normal y conserva el log completo desde RESET. |
+| `wifi pmf` reinicia o falla al limpiar la radio | El comando es experimental: la causa del reinicio anterior sigue pendiente. Conserva el log desde RESET y deja de usar PMF hasta depurarlo. Ante un error de limpieza, reinicia la placa antes de usar Wi-Fi. No desactives el watchdog. |
 | Cambiaste el codigo pero no cambia la placa | Compilar no actualiza la placa: tambien debes flashear el nuevo firmware. |
 
 Para pedir ayuda, incluye el comando que ejecutaste, el primer error completo, la variante de placa, el conector utilizado y los logs desde RESET. No te limites a la ultima linea `FAILED`.
@@ -440,5 +520,33 @@ Resultado: **SUCCESS**, con 298.196 bytes de programa y 14.344 bytes de RAM esta
 Se verifico que la configuracion generada selecciona flash de 16 MB, PSRAM octal a 80 MHz y consola UART0 a 115200 baudios. Los archivos de la aplicacion se compilan con avisos estrictos y los avisos tratados como errores.
 
 **Pendiente:** flasheo y prueba real en la placa. En la comprobacion inicial no se detectaron puertos serie. Compilar correctamente no demuestra que el cable, la placa o las memorias fisicas funcionen. Esta guia describe como realizar esa verificacion; los ejemplos de consola no son una captura de una prueba fisica ya realizada.
+
+### Pruebas de PMF
+
+Las pruebas locales de [tests/run_wifi_audit.py](tests/run_wifi_audit.py) compilan la logica real de auditoria sin radio ni acceso a puertos COM:
+
+```powershell
+.\.venv\Scripts\python.exe tests/run_wifi_audit.py
+```
+
+Requieren Zig, Clang o GCC; consulta `--help` para preparar el compilador. Se verificaron 6.325 comprobaciones en cada modo `signed-char` y `unsigned-char`, con avisos como errores y comprobaciones de comportamiento indefinido. Incluyen PMF opcional/obligatorio/no soportado, anuncios truncados o fragmentados, longitudes y contadores invalidos, elementos duplicados, listas multiples de cifrado/AKM y campos RSN opcionales. El filtro individual tiene pruebas de BSSID y origen coincidentes, tramas cortas, cabeceras invalidas y direcciones multicast.
+
+Las pruebas en placa aportadas por el usuario mostraron reinicios al activar la captura PMF (`ic_enable_sniffer`), incluyendo errores de cache, excepciones y watchdog. Mover el callback y sus auxiliares a IRAM no resolvio el fallo: el registro posterior con identificador de aplicacion `4488c0421` tambien se reinicio. La causa exacta sigue pendiente de depuracion.
+
+En una mitigacion anterior se deshabilito toda la captura PMF. Ahora se ha retirado del escaneo y solo se activa explicitamente con `wifi pmf <BSSID>`. La compilacion del comando individual se verifico con ESP-IDF; las pruebas locales no ejecutan el driver ni prueban sus errores, la restauracion de la radio o su estabilidad. El usuario probo esta variante en placa y aporto un nuevo reinicio durante el escaneo normal; la consulta PMF individual sigue sin validar.
+
+El nuevo registro corresponde a la imagen `cbc2303f4`, cuyo identificador incorporado se cotejo con el binario local antes de resolver la traza. La cadena incluye `scan_parse_beacon`, `wpa_parse_wpa_ie_wrapper`, `wpa_parse_wpa_ie_rsn` y `rsn_selector_to_bitfield` del SDK. No aparece nuestro analizador PMF ni se activa `ic_enable_sniffer`. El PC `0x42043a8c` y `EXCVADDR=0x82043d5e` no bastan para atribuir la causa a una red, al hardware o al SDK.
+
+Se preparo una prueba reversible cambiando solo la frecuencia de flash a 40 MHz, sin modificar el codigo Wi-Fi ni el SDK, para investigar una posible dependencia de la lectura de instrucciones desde flash. El binario de diagnostico tiene identificador de aplicacion `bc9fbfc40` y cabecera de flash a 40 MHz. **Pendiente de probar en placa; no se da el reinicio por resuelto.** Flashear con PlatformIO siguiendo la seccion 5, incluido el bootloader, y verificar `SPI Speed : 40MHz` al arrancar. Ejecutar cinco veces `wifi scan`, una vez por comando completado, sin PMF. Si reinicia, detener la prueba y conservar el primer log completo con el identificador de imagen; si los escaneos pasan, repetir despues de RESET. Un resultado estable apoya seguir investigando esa configuracion, pero no demuestra por si solo la causa.
+
+Para identificar una imagen utiliza el campo `ELF file SHA256` de la informacion de aplicacion incorporada al binario, que es el que imprime la placa. El hash obtenido con `Get-FileHash firmware.elf` puede diferir porque el proceso de generacion modifica el ELF. En este entorno puede consultarse asi:
+
+```powershell
+.\.venv\Scripts\python.exe "$env:USERPROFILE\.platformio\packages\tool-esptoolpy\esptool.py" --chip esp32s3 image_info --version 2 .pio/build/esp32s3_n16r8/firmware.bin
+```
+
+**Pendiente en hardware:** cerrar el monitor, flashear siguiendo la seccion 5 y ejecutar varias veces `wifi scan` y `wifi audit`, con el ESP32 conectado y desconectado. Deben listar resultados y volver a `lab>` sin activar `ic_enable_sniffer` ni mostrar campos PMF. Comprobar tambien `wifi suspects` con referencias registradas.
+
+Para la consulta individual, comprobar primero que rechaza una direccion invalida, un BSSID ausente, un escaneo de mas de 120 segundos y una estacion conectada. Desconectar, escanear y ejecutar `wifi pmf <BSSID>` sobre un AP propio: debe devolver un estado anunciado o `unknown` al agotar el plazo, y permitir un nuevo escaneo y conexion despues. Contrastar los estados con la configuracion PMF del AP. Si se reinicia al activar la captura, conservar el log completo y no dar por resuelto el fallo original. Los errores de inicio/parada y restauracion requieren pruebas adicionales del driver o inyeccion de fallos.
 
 Documentacion de referencia: [guia oficial de ESP32-S3 DevKitC-1](https://docs.espressif.com/projects/esp-dev-kits/en/latest/esp32s3/esp32-s3-devkitc-1/user_guide_v1.1.html).
