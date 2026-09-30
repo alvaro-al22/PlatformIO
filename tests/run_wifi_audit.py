@@ -1,4 +1,4 @@
-"""Compile and run the real audit module with host-only SDK type stubs."""
+"""Compile and run audit and peripheral argument tests without hardware."""
 import argparse
 import os
 from pathlib import Path
@@ -55,6 +55,14 @@ behavior traps. The reduced SDK stub is test-only, not an SDK ABI validation.
                 print(f"\nBUILD/RUN {mode}-char: {subprocess.list2cmdline(compile_command)}", flush=True)
                 subprocess.run(compile_command, check=True, cwd=root)
                 subprocess.run([str(exe)], check=True, cwd=root)
+                arguments_exe = Path(build) / ("command_args_" + mode + (".exe" if os.name == "nt" else ""))
+                arguments_command = command + [
+                    "-std=c11", "-Wall", "-Wextra", "-Werror", "-pedantic", "-O2", "-g",
+                    "-fsanitize=undefined", "-fsanitize-undefined-trap-on-error", f"-f{mode}-char",
+                    str(root / "tests/test_command_args.c"), "-o", str(arguments_exe),
+                ]
+                subprocess.run(arguments_command, check=True, cwd=root)
+                subprocess.run([str(arguments_exe)], check=True, cwd=root)
         print(f"SUCCESS: {len(modes)} host build(s) and test execution(s).", flush=True)
     except (OSError, subprocess.CalledProcessError) as error:
         parser.exit(1, f"Host tests failed: {error}\n")

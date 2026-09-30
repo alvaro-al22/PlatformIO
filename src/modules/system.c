@@ -101,7 +101,7 @@ static int system_command(int argc, char **argv)
     }
     if (strcmp(argv[1], "pins") == 0) {
         for (size_t index = 0; index < sizeof(pins) / sizeof(pins[0]); ++index) {
-            printf("%-16s GPIO%d (reserved, inactive)\n", pins[index].name, pins[index].number);
+            printf("%-16s GPIO%d (reserved; runtime level not measured)\n", pins[index].name, pins[index].number);
         }
         puts("UART0=43/44 USB=19/20 JTAG=39..42 LED=38/48 BOOT=0/3/45/46 MEMORY=26..37");
         return 0;

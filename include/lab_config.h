@@ -27,9 +27,9 @@
     PIN(PN532_RESET, 5) \
     PIN(IR_TX, 17) \
     PIN(IR_RX, 18) \
-    PIN(EXPANSION_1, 1) \
-    PIN(EXPANSION_2, 2) \
-    PIN(EXPANSION_3, 6) \
+    PIN(SD_CS, 1) \
+    PIN(RFID_RX, 2) \
+    PIN(IBUTTON, 6) \
     PIN(EXPANSION_4, 7) \
     PIN(EXPANSION_5, 15) \
     PIN(EXPANSION_6, 16) \

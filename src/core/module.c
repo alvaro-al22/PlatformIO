@@ -11,6 +11,10 @@ static const lab_module_t *const modules[] = {
     &lab_cc1101_module,
     &lab_ir_module,
     &lab_gpio_module,
+    &lab_ibutton_module,
+    &lab_rfid_module,
+    &lab_storage_module,
+    &lab_usb_module,
 };
 
 esp_err_t lab_nvs_init(void)
@@ -21,11 +25,7 @@ esp_err_t lab_nvs_init(void)
     }
     esp_err_t error = nvs_flash_init();
     if (error == ESP_ERR_NVS_NO_FREE_PAGES || error == ESP_ERR_NVS_NEW_VERSION_FOUND) {
-        ESP_LOGW("nvs", "NVS partition incompatible, erasing it");
-        error = nvs_flash_erase();
-        if (error == ESP_OK) {
-            error = nvs_flash_init();
-        }
+        ESP_LOGE("nvs", "NVS needs manual recovery; stored data will NOT be erased automatically");
     }
     ready = error == ESP_OK;
     return error;
@@ -64,9 +64,10 @@ int lab_menu(int argc, char **argv)
     }
     for (size_t index = 0; index < sizeof(modules) / sizeof(modules[0]); ++index) {
         printf("%-8s %-18s %s\n", modules[index]->name,
-               modules[index]->implemented ? "ready" : "not implemented",
+               modules[index]->implemented ? "software available" : "not implemented",
                modules[index]->description);
     }
+    puts("NOTE software available does not mean hardware tested; see system diag and module help");
     return 0;
 }
 

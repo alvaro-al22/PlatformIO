@@ -1,0 +1,39 @@
+dependencies:
+  espressif/esp_tinyusb:
+    component_hash: 6a50305bc61c7a361da8c0833642be824e92dacb0a6001719a832a4e96e471bf
+    source:
+      service_url: https://api.components.espressif.com/
+      type: service
+    version: 1.7.6~2
+  espressif/onewire_bus:
+    component_hash: dcce4fb1c2fc43c3d02de1cc9abdf062127468a785578723696de3817c526f99
+    source:
+      service_url: https://api.components.espressif.com/
+      type: service
+    version: 1.1.2
+  espressif/tinyusb:
+    component_hash: 16c8d774dab1f484d3e0c0f61105624d2424bbae864efd19818baf7b451b41e7
+    source:
+      service_url: https://api.components.espressif.com/
+      type: service
+    version: 0.21.0~2
+  garag/esp-idf-pn532:
+    component_hash: aac8ca6ebb69a2b4e344991fa1764d2d298ae44bb90f308794a52bc8104c1d9f
+    source:
+      service_url: https://api.components.espressif.com/
+      type: service
+    version: 0.2.1
+  idf:
+    component_hash: null
+    source:
+      type: idf
+    version: 5.4.0
+  jgromes/radiolib:
+    component_hash: 67051f3def406f40329e1fd94ee94f1eb1f2dc2962235c8f2e900cabc366dbfa
+    source:
+      service_url: https://api.components.espressif.com/
+      type: service
+    version: 7.8.1
+manifest_hash: 4ae2aa6fbf4c678593bcebbf594fde022e13b03341d794c98919288957f8f5ed
+target: esp32s3
+version: 1.0.0

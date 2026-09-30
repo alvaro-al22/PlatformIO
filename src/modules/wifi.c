@@ -1,7 +1,10 @@
 #include <stdio.h>
+#include <stdlib.h>
 #include <inttypes.h>
 #include <string.h>
 #include "core/module.h"
+#include "core/command_args.h"
+#include "nvs.h"
 #include "wifi_audit.h"
 #include "esp_attr.h"
 #include "esp_check.h"
@@ -152,11 +155,13 @@ static void print_ap(const wifi_ap_record_t *ap, const char *pmf)
            pmf ? pmf : "", ap->ssid[0] == 0 ? " (hidden/empty SSID)" : "");
 }
 
-static esp_err_t refresh_scan(void)
+static esp_err_t refresh_scan(bool passive, uint8_t channel)
 {
     scan_valid = false;
     scan_count = 0;
-    wifi_scan_config_t config = {.show_hidden = true};
+    wifi_scan_config_t config = {.show_hidden = true, .channel = channel,
+        .scan_type = passive ? WIFI_SCAN_TYPE_PASSIVE : WIFI_SCAN_TYPE_ACTIVE};
+    if (passive) config.scan_time.passive = 120;
     esp_err_t error = esp_wifi_scan_start(&config, true);
     if (error != ESP_OK) {
         printf("ERR wifi scan: %s\n", esp_err_to_name(error));
@@ -184,6 +189,7 @@ static esp_err_t refresh_scan(void)
     scan_time_us = esp_timer_get_time();
     scan_valid = true;
     printf("OK scan: %u APs found, %u retained; 2.4 GHz only\n", total, scan_count);
+    printf("NOTE scan mode=%s channel=%u (0=all allowed channels)\n", passive ? "passive" : "active", channel);
     if (total > scan_count) {
         puts("WARN truncated scan: omitted APs are NOT assessed; absence is not proof of safety");
     }
@@ -271,9 +277,9 @@ static int wifi_pmf(const char *argument)
     return ESP_OK;
 }
 
-static int wifi_scan(void)
+static int wifi_scan(bool passive, uint8_t channel)
 {
-    esp_err_t error = refresh_scan();
+    esp_err_t error = refresh_scan(passive, channel);
     if (error != ESP_OK) return error;
     for (uint16_t index = 0; index < scan_count; ++index) {
         print_ap(&scan_records[index], NULL);
@@ -283,7 +289,7 @@ static int wifi_scan(void)
 
 static int wifi_audit(void)
 {
-    esp_err_t error = refresh_scan();
+    esp_err_t error = refresh_scan(false, 0);
     if (error != ESP_OK) return error;
     unsigned flagged = 0;
     for (uint16_t index = 0; index < scan_count; ++index) {
@@ -309,10 +315,51 @@ static int wifi_audit(void)
     return 0;
 }
 
+static int wifi_trust_persist(const char *action)
+{
+    bool load = strcmp(action, "load") == 0;
+    bool erase = strcmp(action, "erase") == 0;
+    esp_err_t error = lab_nvs_init();
+    if (error != ESP_OK) return error;
+    nvs_handle_t handle;
+    error = nvs_open("wifi_trust", load ? NVS_READONLY : NVS_READWRITE, &handle);
+    if (error != ESP_OK) return error;
+    if (erase) {
+        error = nvs_erase_key(handle, "baseline");
+        if (error == ESP_OK) error = nvs_commit(handle);
+    } else {
+        struct baseline {
+            uint32_t version, record_size;
+            lab_wifi_trust_store_t store;
+        };
+        struct baseline *saved = calloc(1, sizeof(*saved));
+        if (!saved) { nvs_close(handle); return ESP_ERR_NO_MEM; }
+        if (load) {
+            size_t length = sizeof(*saved);
+            error = nvs_get_blob(handle, "baseline", saved, &length);
+            if (error == ESP_OK && (length != sizeof(*saved) || saved->version != 1 ||
+                saved->record_size != sizeof(wifi_ap_record_t) || saved->store.count > LAB_WIFI_TRUST_LIMIT)) error = ESP_ERR_INVALID_SIZE;
+            if (error == ESP_OK) trusted = saved->store;
+        } else {
+            saved->version = 1;
+            saved->record_size = sizeof(wifi_ap_record_t);
+            saved->store = trusted;
+            error = nvs_set_blob(handle, "baseline", saved, sizeof(*saved));
+            if (error == ESP_OK) error = nvs_commit(handle);
+        }
+        free(saved);
+    }
+    nvs_close(handle);
+    printf("%s trust %s: %s; credentials are not stored\n", error == ESP_OK ? "OK" : "ERR", action, esp_err_to_name(error));
+    return error;
+}
+
 static int wifi_trust(const char *argument)
 {
+    if (strcmp(argument, "save") == 0 || strcmp(argument, "load") == 0 || strcmp(argument, "erase") == 0)
+        return wifi_trust_persist(argument);
     if (strcmp(argument, "list") == 0) {
-        printf("OK %u/%u trusted APs (RAM only; lost on reset)\n",
+        printf("OK %u/%u trusted APs in RAM; explicit trust save/load for persistence\n",
                (unsigned)trusted.count, LAB_WIFI_TRUST_LIMIT);
         for (size_t index = 0; index < trusted.count; ++index) print_ap(&trusted.aps[index], NULL);
         puts("NOTE stored baseline, not a live scan or verified identity; PMF is not stored/compared");
@@ -325,7 +372,7 @@ static int wifi_trust(const char *argument)
     }
     uint8_t bssid[6];
     if (!lab_wifi_parse_bssid(argument, bssid)) {
-        puts("ERR USAGE: wifi trust <BSSID xx:xx:xx:xx:xx:xx>|list|clear (unicast, nonzero)");
+        puts("ERR USAGE: wifi trust <BSSID>|list|clear|save|load|erase (unicast, nonzero)");
         return ESP_ERR_INVALID_ARG;
     }
     if (!scan_valid || esp_timer_get_time() - scan_time_us > WIFI_TRUST_SCAN_MAX_AGE_US) {
@@ -360,7 +407,7 @@ static int wifi_trust(const char *argument)
 
 static int wifi_suspects(void)
 {
-    esp_err_t error = refresh_scan();
+    esp_err_t error = refresh_scan(false, 0);
     if (error != ESP_OK) return error;
     unsigned flagged = 0;
     for (uint16_t index = 0; index < scan_count; ++index) {
@@ -438,7 +485,7 @@ static int wifi_status(void)
 
 static int wifi_command(int argc, char **argv)
 {
-    static const char *usage = "ERR USAGE: wifi scan|audit|pmf <BSSID>|suspects|trust <BSSID|list|clear>|status|disconnect|connect <ssid> [password]";
+    static const char *usage = "ERR USAGE: wifi scan [active|passive] [channel 0..13]|audit|pmf <BSSID>|suspects|trust <BSSID|list|clear|save|load|erase>|status|disconnect|connect <ssid> [password]";
     if (argc < 2) {
         puts(usage);
         return ESP_ERR_INVALID_ARG;
@@ -449,7 +496,14 @@ static int wifi_command(int argc, char **argv)
         return ESP_ERR_INVALID_STATE;
     }
     if (argc == 3 && strcmp(argv[1], "pmf") == 0) return wifi_pmf(argv[2]);
-    bool scan = argc == 2 && strcmp(argv[1], "scan") == 0;
+    bool scan = argc >= 2 && argc <= 4 && strcmp(argv[1], "scan") == 0;
+    bool passive = scan && argc >= 3 && strcmp(argv[2], "passive") == 0;
+    uint32_t channel = 0;
+    if (scan && ((argc >= 3 && !passive && strcmp(argv[2], "active") != 0) ||
+        (argc == 4 && !lab_arg_u32(argv[3], 13, &channel)))) {
+        puts(usage);
+        return ESP_ERR_INVALID_ARG;
+    }
     bool audit = argc == 2 && strcmp(argv[1], "audit") == 0;
     bool suspects = argc == 2 && strcmp(argv[1], "suspects") == 0;
     bool status = argc == 2 && strcmp(argv[1], "status") == 0;
@@ -471,7 +525,7 @@ static int wifi_command(int argc, char **argv)
     if (audit) return wifi_audit();
     if (suspects) return wifi_suspects();
     if (scan) {
-        return wifi_scan();
+        return wifi_scan(passive, (uint8_t)channel);
     }
     if (status) {
         return wifi_status();
@@ -497,7 +551,7 @@ static esp_err_t diagnose(void)
 
 const lab_module_t lab_wifi_module = {
     .name = "wifi",
-    .description = "Wi-Fi: scan|audit|pmf <BSSID>|trust <BSSID|list|clear>|suspects|status|connect|disconnect",
+    .description = "Wi-Fi: scan [active|passive] [channel]|audit|pmf|trust <BSSID|list|clear|save|load|erase>|suspects|status|connect|disconnect",
     .command = wifi_command,
     .diagnose = diagnose,
     .implemented = true,

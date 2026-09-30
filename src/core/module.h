@@ -19,6 +19,10 @@ extern const lab_module_t lab_ir_module;
 extern const lab_module_t lab_gpio_module;
 extern const lab_module_t lab_wifi_module;
 extern const lab_module_t lab_ble_module;
+extern const lab_module_t lab_ibutton_module;
+extern const lab_module_t lab_rfid_module;
+extern const lab_module_t lab_storage_module;
+extern const lab_module_t lab_usb_module;
 
 const lab_module_t *const *lab_modules(size_t *count);
 int lab_not_implemented(int argc, char **argv);
